@@ -1,0 +1,12 @@
+name: fsca
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pydantic>=2.7
+  - pymupdf>=1.24
+  - requests>=2.31
+  - pip
+  - pip:
+      # le SDK Anthropic évolue vite (fallbacks, sorties structurées) : version PyPI à jour
+      - anthropic>=2.6.0

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+# Données : seul l'export complet est publié (CSV, JSONL, fiches Markdown).
+# PDF, base SQLite, journaux et exports datés restent en local.
+data/*
+!data/exports/
+data/exports/*
+!data/exports/complet/
+
+# configuration locale (éditeur, Claude Code)
+**/.claude/
+.idea/
+.vscode/
+.mcp.json
