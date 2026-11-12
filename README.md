@@ -112,6 +112,19 @@ référence très courte) : à confirmer avec le fabricant et le `type_equipemen
 Dans SQLite, la table `identifiants` contient aussi les restrictions (`role = restriction`),
 et `cles_recherche` une ligne par variante, indexée, pour une jointure exacte.
 
+## Fiche de synthèse
+
+Chaque notice a un bloc `fiche` dans `notices.jsonl`, repris en tête de la fiche Markdown
+(tableau) et dans chaque section de dispositif, et en colonnes du CSV :
+
+| Champ | Valeurs | Origine |
+|---|---|---|
+| Type de notice | Evolution documentaire, Action corrective, Retrait de lots, Retrait d'équipement | Claude |
+| Conséquences | Catastrophiques, Majeures, Significatives, Mineures | dérivé de la gravité ISO 14971 (catastrophique → Catastrophiques, critique → Majeures, sérieuse → Significatives, mineure/négligeable → Mineures) |
+| Type de DM | Equipement, Consommable, Implant, Réactif, Instrumentation, Logiciel, Autre | Claude, par dispositif |
+| Classe DM CE | I, IIa, IIb, III, Is, Ir, Im, IVD, D, C, B, A | écrite dans la notice, sinon estimée par Claude (`classe_dm_ce_source` = `estimée`, « (estimée) » dans la fiche) |
+| Description, Modèle, Lot, Serial number | texte et listes | Claude, par dispositif ; Modèle = modèles + références ; Lot / Serial number incluent les plages (début → fin) |
+
 ## Champs extraits et référentiels
 
 Le schéma complet est dans [fsca/schema.py](fsca/schema.py).

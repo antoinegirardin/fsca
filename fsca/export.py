@@ -8,17 +8,66 @@ import sqlite3
 from pathlib import Path
 
 from .keys import identifier_keys, iter_identifiers, reliability, role
+from .schema import CONSEQUENCES_FROM_GRAVITE
 
+# Identifiants affichés en plus des champs de la fiche (Modèle, Lot, Serial number)
 ID_LABELS = {
     "udi_di_gtin": "UDI-DI / GTIN",
     "basic_udi_di": "Basic UDI-DI",
-    "references_catalogue": "Références",
-    "modeles": "Modèles",
     "versions_logicielles": "Versions logicielles",
-    "lots": "Lots",
-    "numeros_serie": "Numéros de série",
     "plages_ou_motifs": "Plages / motifs",
 }
+NON_RENSEIGNE = "–"
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen, out = set(), []
+    for v in values:
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _plages(ids: dict, kind: str) -> list[str]:
+    return [f"{p['debut']} → {p['fin']}" for p in ids.get("plages_numeriques") or [] if p["type"] == kind]
+
+
+def fiche(ex: dict) -> dict:
+    """Champs au format de la fiche de synthèse, une entrée par dispositif.
+
+    Les notices extraites avant l'ajout de type_notice / type_dm / classe_ce ont ces champs à null
+    jusqu'à leur ré-extraction ; « Conséquences » est dérivé de la gravité ISO 14971.
+    """
+    ev = ex["evaluation"]
+    devices = []
+    for dev in ex["dispositifs"]:
+        ids = dev["identifiants"]
+        devices.append({
+            "nom_commercial": dev["nom_commercial"],
+            "type_dm": dev.get("type_dm"),
+            "classe_dm_ce": dev.get("classe_ce"),
+            "classe_dm_ce_source": dev.get("classe_ce_source"),
+            "description": dev["description"],
+            "modele": _unique((ids.get("modeles") or []) + (ids.get("references_catalogue") or [])),
+            "lot": (ids.get("lots") or []) + _plages(ids, "lot"),
+            "serial_number": (ids.get("numeros_serie") or []) + _plages(ids, "serie"),
+        })
+    return {
+        "type_notice": ex.get("type_notice"),
+        "consequences": CONSEQUENCES_FROM_GRAVITE.get(ev["gravite_iso14971"]),
+        "dispositifs": devices,
+    }
+
+
+def _classe(d: dict) -> str:
+    if not d["classe_dm_ce"]:
+        return NON_RENSEIGNE
+    return d["classe_dm_ce"] + (" (estimée)" if d["classe_dm_ce_source"] == "estimée" else "")
+
+
+def _liste(values: list[str]) -> str:
+    return ", ".join(values) if values else NON_RENSEIGNE
 
 
 def _record(row: sqlite3.Row) -> dict:
@@ -31,6 +80,7 @@ def _record(row: sqlite3.Row) -> dict:
         "motif_mise_a_jour": row["begruendung"],
         "fabricant_swissmedic": row["hersteller"],
         "documents_utilises": docs,
+        "fiche": fiche(json.loads(row["extraction_json"])) if row["extraction_json"] else None,
         "swissmedic_api": json.loads(row["api_json"]),
         "extraction": json.loads(row["extraction_json"]) if row["extraction_json"] else None,
         "identifiants_detectes_regex": json.loads(row["regex_json"]) if row["regex_json"] else None,
@@ -58,9 +108,15 @@ def markdown_sheet(rec: dict) -> str:
         return "\n".join(lines) + "\n"
 
     ev = ex["evaluation"]
+    fi = rec["fiche"]
     lines += [
         f"- Fabricant : {ex['fabricant']}" + (f" (SRN {ex['srn_fabricant']})" if ex["srn_fabricant"] else ""),
         f"- Référence fabricant : {ex['reference_fabricant'] or '–'} · Date de la notice : {ex['date_notice'] or '–'}",
+        "",
+        "| Type de notice | Conséquences | Urgence | Classe de rappel (FDA) |",
+        "|---|---|---|---|",
+        f"| **{fi['type_notice'] or NON_RENSEIGNE}** | **{fi['consequences'] or NON_RENSEIGNE}** "
+        f"| {ev['urgence']} | {ev['classe_rappel_estimee']} |",
         "",
         "## Synthèse",
         ex["synthese"],
@@ -76,22 +132,22 @@ def markdown_sheet(rec: dict) -> str:
         "",
         "## Dispositifs concernés",
     ]
-    for dev in ex["dispositifs"]:
+    for dev, fd in zip(ex["dispositifs"], fi["dispositifs"]):
         lines += [
             f"### {dev['nom_commercial']}",
+            f"- **Type de DM** : {fd['type_dm'] or NON_RENSEIGNE} · **Classe DM CE** : {_classe(fd)}",
+            f"- **Description** : {fd['description']}",
+            f"- **Modèle** : {_liste(fd['modele'])}",
+            f"- **Lot** : {_liste(fd['lot'])}",
+            f"- **Serial number** : {_liste(fd['serial_number'])}",
             *([f"- Autres noms : {', '.join(dev['noms_alternatifs'])}"] if dev.get("noms_alternatifs") else []),
-            f"- Type d'équipement : {dev['type_equipement']} ({dev['nature']})",
-            f"- Catégorie EMDN : {dev['categorie_emdn']}",
-            f"- Description : {dev['description']}",
-            f"- Classe réglementaire : {dev['classe_risque_reglementaire'] or '–'} · Portée : {dev['portee']}",
+            f"- Type d'équipement : {dev['type_equipement']} ({dev['nature']}) · Catégorie EMDN : "
+            f"{dev['categorie_emdn']} · Portée : {dev['portee']}",
         ]
         ids = dev["identifiants"]
         for key, label in ID_LABELS.items():
             if ids[key]:
                 lines.append(f"- {label} : " + ", ".join(ids[key]))
-        for p in ids.get("plages_numeriques") or []:
-            lines.append(f"- Plage de {'lots' if p['type'] == 'lot' else 'numéros de série'} : "
-                         f"{p['debut']} → {p['fin']}")
         if not ids["liste_complete"]:
             lines.append("- ⚠ Liste d'identifiants incomplète (voir la notice ou son annexe)")
         if dev["non_concernes"]:
@@ -139,6 +195,7 @@ CSV_FIELDS = [
     "cles_recherche",
     "restriction_lots", "restriction_numeros_serie", "restriction_versions", "restriction_plages",
     "restriction_autres", "liste_complete", "non_concernes", "produit_associe_role",
+    "type_notice", "consequences", "type_dm", "classe_dm_ce",
     "fabricant", "type_equipement", "nature", "categorie_emdn", "portee",
     "statut", "date_publication", "date_statut", "titre",
     "urgence", "gravite_iso14971", "probabilite", "classe_rappel_estimee", "arret_utilisation_requis",
@@ -164,7 +221,9 @@ def csv_rows(rec: dict):
         yield notice  # notice sans extraction (erreur) : une ligne pour qu'elle reste visible
         return
     ev = ex["evaluation"]
+    fi = rec["fiche"]
     notice.update({
+        "type_notice": fi["type_notice"], "consequences": fi["consequences"],
         "fabricant": ex["fabricant"], "titre": ex["titre"], "synthese": ex["synthese"],
         "urgence": ev["urgence"], "gravite_iso14971": ev["gravite_iso14971"], "probabilite": ev["probabilite"],
         "classe_rappel_estimee": ev["classe_rappel_estimee"],
@@ -179,6 +238,7 @@ def csv_rows(rec: dict):
         ids = dev["identifiants"]
         devices[i] = {
             "dispositif_id": f"{ref}-{i + 1}", "nom_commercial": dev["nom_commercial"],
+            "type_dm": fi["dispositifs"][i]["type_dm"], "classe_dm_ce": _classe(fi["dispositifs"][i]),
             "type_equipement": dev.get("type_equipement"),
             **{k: dev.get(k) for k in ("nature", "categorie_emdn", "portee", "non_concernes")},
             "restriction_lots": " | ".join(ids.get("lots") or []),
@@ -204,7 +264,8 @@ def csv_rows(rec: dict):
             # Les restrictions (lots, versions…) portent sur le dispositif concerné, pas sur le produit tiers.
             row.update({k: "" for k in ("restriction_lots", "restriction_numeros_serie", "restriction_versions",
                                         "restriction_plages", "restriction_autres", "liste_complete",
-                                        "non_concernes", "portee", "nature", "categorie_emdn", "type_equipement")})
+                                        "non_concernes", "portee", "nature", "categorie_emdn", "type_equipement",
+                                        "type_dm", "classe_dm_ce")})
             sig = (item["type_id"], keys[0] if keys else item["valeur"])
             if sig in associated:
                 prev = associated[sig]

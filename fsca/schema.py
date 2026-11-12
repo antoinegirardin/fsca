@@ -97,6 +97,35 @@ ACTION_USER_LABELS = {
     "other": "autre",
 }
 
+TYPE_NOTICE_LABELS = {
+    "doc_update": "Evolution documentaire",
+    "corrective_action": "Action corrective",
+    "lot_recall": "Retrait de lots",
+    "device_recall": "Retrait d'équipement",
+}
+
+TYPE_DM_LABELS = {
+    "equipment": "Equipement",
+    "consumable": "Consommable",
+    "implant": "Implant",
+    "reagent": "Réactif",
+    "instrument": "Instrumentation",
+    "software": "Logiciel",
+    "other": "Autre",
+}
+
+CLASSES_CE = ("I", "IIa", "IIb", "III", "Is", "Ir", "Im", "IVD", "D", "C", "B", "A")
+
+# Échelle des conséquences à 4 niveaux, dérivée localement de la gravité ISO 14971 (5 niveaux)
+CONSEQUENCES_FROM_GRAVITE = {
+    "catastrophique": "Catastrophiques",
+    "critique": "Majeures",
+    "sérieuse": "Significatives",
+    "mineure": "Mineures",
+    "négligeable": "Mineures",
+    "non déterminable": "Non déterminable",
+}
+
 URGENCE_LABELS = {"immediate": "immédiate", "high": "élevée", "moderate": "modérée", "low": "faible"}
 GRAVITE_LABELS = {
     "negligible": "négligeable", "minor": "mineure", "serious": "sérieuse",
@@ -181,7 +210,22 @@ class Dispositif(_Strict):
         "X sans destination médicale ; Y handicap ; Z équipements, logiciels et consommables ; ? indéterminée."
     )
     nature: Literal["md", "ivd", "software", "accessory", "system_kit", "other"]
-    classe_reglementaire: str = Field(description="I, Is, Im, IIa, IIb, III ; IVD A-D, si écrite." + EMPTY)
+    type_dm: Literal["equipment", "consumable", "implant", "reagent", "instrument", "software", "other"] = Field(
+        description="equipment = appareil ou système (moniteur, pompe, analyseur, lit, imagerie) ; consumable = "
+        "usage unique ou à durée limitée non implanté (set, cathéter, aiguille, pansement, milieu de culture "
+        "hors réactif de test) ; implant = destiné à rester dans le corps (prothèse, stent, implant dentaire, "
+        "pacemaker) ; reagent = réactif, calibrateur ou contrôle IVD ; instrument = instrument chirurgical ou "
+        "médical réutilisable, ancillaire ; software = logiciel autonome ou bibliothèque logicielle ; other."
+    )
+    classe_ce: Literal["I", "IIa", "IIb", "III", "Is", "Ir", "Im", "IVD", "D", "C", "B", "A", "unknown"] = Field(
+        description="Classe de risque CE. DM (MDR) : I, Is (stérile), Im (mesure), Ir (instrument chirurgical "
+        "réutilisable), IIa, IIb, III. DM-DIV : A, B, C, D (IVDR) ; IVD pour un DM-DIV sous l'ancienne directive "
+        "98/79/CE sans classe A-D. Prends la classe écrite dans la notice ; sinon estime-la selon les règles "
+        "de classification et le type de dispositif ; unknown si impossible."
+    )
+    classe_ce_source: Literal["notice", "estimated"] = Field(
+        description="notice si la classe est écrite dans la notice, estimated si tu l'as déduite."
+    )
     portee: Literal["all", "lots_serials", "sw_versions", "configuration", "unspecified"]
     identifiants: Identifiants
     non_concernes: str = Field(
@@ -250,6 +294,14 @@ class NoticeExtraction(_Strict):
     incidents_signales: str = Field(
         description="Incidents/plaintes rapportés, ou 'aucun incident signalé' si c'est écrit." + EMPTY
     )
+    type_notice: Literal["doc_update", "corrective_action", "lot_recall", "device_recall"] = Field(
+        description="Nature principale de la notice. doc_update = mise à jour d'instructions d'utilisation, "
+        "d'étiquetage ou information, sans intervention sur les dispositifs ; corrective_action = les "
+        "dispositifs restent en place mais sont corrigés (mise à jour logicielle, modification sur site, "
+        "inspection, mesure de contournement) ; lot_recall = retrait, retour ou destruction de lots ou numéros "
+        "de série précis de consommables, réactifs ou implants ; device_recall = retrait, retour ou "
+        "remplacement d'équipements (tout un modèle ou des numéros de série précis)."
+    )
     types_action_fsca: list[Literal["recall", "onsite_fix", "sw_update", "replacement", "destruction",
                                     "ifu_label_change", "use_advice", "user_check", "patient_followup",
                                     "info_only", "other"]]
@@ -279,6 +331,7 @@ def to_record(ex: NoticeExtraction) -> dict[str, Any]:
               "risque_declare_fabricant", "probabilite_declaree_fabricant",
               "delai_accuse_reception", "contact", "remarques_extraction"):
         d[k] = _none_if_empty(d[k])
+    d["type_notice"] = TYPE_NOTICE_LABELS[d["type_notice"]]
     d["types_action_fsca"] = [ACTION_FSCA_LABELS[c] for c in d["types_action_fsca"]]
     for a in d["actions_utilisateur"]:
         a["type"] = ACTION_USER_LABELS[a["type"]]
@@ -287,7 +340,9 @@ def to_record(ex: NoticeExtraction) -> dict[str, Any]:
         dev["categorie_emdn"] = EMDN_LABELS[dev.pop("emdn")]
         dev["nature"] = NATURE_LABELS[dev["nature"]]
         dev["portee"] = PORTEE_LABELS[dev["portee"]]
-        dev["classe_risque_reglementaire"] = _none_if_empty(dev.pop("classe_reglementaire"))
+        dev["type_dm"] = TYPE_DM_LABELS[dev["type_dm"]]
+        dev["classe_ce"] = None if dev["classe_ce"] == "unknown" else dev["classe_ce"]
+        dev["classe_ce_source"] = "notice" if dev["classe_ce_source"] == "notice" else "estimée"
         dev["non_concernes"] = _none_if_empty(dev["non_concernes"])
         dev["noms_alternatifs"] = [n.strip() for n in dev["noms_alternatifs"] if n.strip()]
         for prod in dev["produits_associes"]:
