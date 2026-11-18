@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -30,6 +31,9 @@ from fsca.swissmedic import SwissmedicClient, select_documents
 log = logging.getLogger("fsca")
 
 OVERLAP_DAYS = 2  # recouvrement entre deux passages : une publication tardive n'est pas manquée
+# Clé API lue ici si ANTHROPIC_API_KEY n'est pas définie : la variable reste hors du shell,
+# Claude Code utilise alors la connexion du compte et non la clé.
+API_KEY_FILE = Path.home() / ".config" / "fsca" / "anthropic_api_key"
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,7 +126,10 @@ def main() -> int:
 
         from fsca.extract import DEFAULT_EFFORT, DEFAULT_MODEL, ExtractionError, LoadedDocument, extract_notice
 
-        client_claude = anthropic.Anthropic()
+        api_key = None
+        if not os.environ.get("ANTHROPIC_API_KEY") and API_KEY_FILE.is_file():
+            api_key = API_KEY_FILE.read_text().strip()
+        client_claude = anthropic.Anthropic(api_key=api_key)
         model, effort = args.model or DEFAULT_MODEL, args.effort or DEFAULT_EFFORT
 
     sm = SwissmedicClient()
