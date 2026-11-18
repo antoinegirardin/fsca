@@ -15,8 +15,9 @@ mamba activate fsca
 
 (Sans mamba : `python -m venv .venv`, l'activer, puis `pip install -r requirements.txt`.)
 
-Clé API : fichier `~/.config/fsca/anthropic_api_key` (recommandé), ou variable
-d'environnement `ANTHROPIC_API_KEY`, prioritaire si elle est définie.
+Clé API, dans l'ordre : variable `ANTHROPIC_API_KEY`, variable `FSCA_ANTHROPIC_API_KEY`,
+fichier `~/.config/fsca/anthropic_api_key`. Préférer `FSCA_ANTHROPIC_API_KEY` (dans `~/.bashrc`)
+ou le fichier :
 
 ```bash
 mkdir -p ~/.config/fsca && (umask 077; read -rsp "Clé API : " k && echo "$k" > ~/.config/fsca/anthropic_api_key)
